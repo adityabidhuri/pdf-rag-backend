@@ -16,3 +16,14 @@ __pycache__/
 
 # Local databases
 *.db
+
+# Local vector database
+chroma_db/
+
+# Uploaded documents
+uploads/
+
+# Environment variables
+.env
+.env.*
+!.env.example
