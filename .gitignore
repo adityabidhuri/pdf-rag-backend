@@ -1,5 +1,4 @@
-
-# Virtual environment
+# Python virtual environments
 venv/
 .venv/
 
@@ -10,8 +9,9 @@ __pycache__/
 # Environment variables and secrets
 .env
 .env.*
+!.env.example
 
-# IDE
+# IDE settings
 .vscode/
 
 # Local databases
@@ -20,10 +20,5 @@ __pycache__/
 # Local vector database
 chroma_db/
 
-# Uploaded documents
+# Uploaded PDFs
 uploads/
-
-# Environment variables
-.env
-.env.*
-!.env.example

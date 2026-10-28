@@ -1,0 +1,10 @@
+fastapi[standard]
+sqlalchemy
+pwdlib[argon2]
+PyJWT
+email-validator
+python-multipart
+pypdf
+google-genai
+python-dotenv
+chromadb

@@ -8,6 +8,14 @@ from models import Document, User
 from schemas import DocumentResponse
 from auth import get_current_user
 
+from pdf_service import extract_pdf_text
+from chunking_service import chunk_pages
+from vector_store import store_chunks
+
+from schemas import DocumentResponse, QuestionRequest
+from rag_service import answer_question
+from google.genai import errors
+
 router = APIRouter(
     prefix="/documents",
     tags=["Documents"],
@@ -25,7 +33,7 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_document(
-    db:db_dependency,
+    db: db_dependency,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
 ):
@@ -36,10 +44,10 @@ async def upload_document(
         )
 
     file_path = UPLOAD_DIR / Path(file.filename).name
-
     file_size = 0
 
     try:
+        
         with file_path.open("wb") as destination:
             while chunk := await file.read(1024 * 1024):
                 file_size += len(chunk)
@@ -52,6 +60,7 @@ async def upload_document(
 
                 destination.write(chunk)
 
+        
         new_document = Document(
             filename=Path(file.filename).name,
             file_path=str(file_path),
@@ -59,14 +68,51 @@ async def upload_document(
         )
 
         db.add(new_document)
+
+       
+        db.flush()
+
+        pages = extract_pdf_text(str(file_path))
+
+        if not pages:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No extractable text found in the PDF",
+            )
+
+        chunks = chunk_pages(pages)
+
+        if not chunks:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No text chunks could be created from the PDF",
+            )
+
+        
+        stored_count = store_chunks(
+            chunks=chunks,
+            document_id=new_document.id,
+            owner_id=current_user.id,
+        )
+
+        if stored_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="No PDF chunks were stored",
+            )
+
+        
         db.commit()
         db.refresh(new_document)
 
         return new_document
 
     except Exception:
+        db.rollback()
+
         if file_path.exists():
             file_path.unlink()
+
         raise
 
     finally:
@@ -149,3 +195,50 @@ def delete_document(
         "message": "Document deleted successfully",
         "document_id": document_id,
     }
+
+
+
+@router.post("/{document_id}/ask")
+def ask_document_question(
+    document_id: int,
+    request: QuestionRequest,
+    db: db_dependency,
+    current_user: User = Depends(get_current_user),
+):
+    
+    if not request.question.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Question cannot be empty",
+        )
+
+   
+    document = (
+        db.query(Document)
+        .filter(
+            Document.id == document_id,
+            Document.owner_id == current_user.id,
+        )
+        .first()
+    )
+
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+
+   
+    try:
+        result = answer_question(
+            question=request.question,
+            document_id=document.id,
+            owner_id=current_user.id,
+        )
+    except errors.APIError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The AI service is temporarily unavailable. Please try again later.",
+        ) from exc
+
+    return result
